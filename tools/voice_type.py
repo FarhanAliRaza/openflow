@@ -103,8 +103,11 @@ def type_text_linux(text, erase_leaked=True):
         # during the push-to-talk combo (e.g. the 'x' from Super+X).
         # Safe to do here because all modifier keys are released by now.
         if erase_leaked:
+            keys = ["Backspace"]
+            if erase_leaked != "no_space":
+                keys.append("Space")
             subprocess.run(
-                ["ydotool", "key", "--delay", "0", "Backspace"],
+                ["ydotool", "key", "--delay", "0"] + keys,
                 timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
         r = subprocess.run(
@@ -150,9 +153,9 @@ def type_text_pynput(text):
     return True
 
 
-def type_text(text):
+def type_text(text, erase_leaked=True):
     if IS_LINUX:
-        return type_text_linux(text)
+        return type_text_linux(text, erase_leaked=erase_leaked)
     return type_text_pynput(text)
 
 
@@ -455,6 +458,7 @@ class VoiceTypeDaemon:
         self.modifier = modifier
         self.key_monitor = None
         self._stop_event = threading.Event()
+        self._last_text = ""
 
     def start(self):
         self.asr.load()
@@ -532,7 +536,12 @@ class VoiceTypeDaemon:
             elapsed = (time.perf_counter() - t0) * 1000
 
             if text.strip():
-                ok = type_text(text)
+                # Skip space after Backspace if previous text ended with
+                # sentence-ending punctuation (field likely has ". " already).
+                ends_punct = self._last_text.rstrip().endswith((".", "!", "?"))
+                erase = "no_space" if ends_punct else True
+                ok = type_text(text, erase_leaked=erase)
+                self._last_text = text
                 status = "typed" if ok else "failed"
                 notify("Voice Type",
                        f"{text[:100]}  [{elapsed:.0f}ms]", timeout=4000)
@@ -596,27 +605,24 @@ def select_device():
         except Exception:
             pass
 
+    # If saved device is still valid, use it silently
+    if saved_valid:
+        return saved_idx
+
     if len(input_devs) <= 1:
         return None
 
     print("\nAudio input devices:")
     for i, dev in input_devs:
-        markers = []
-        if i == default_idx:
-            markers.append("default")
-        if saved_valid and i == saved_idx:
-            markers.append("saved")
-        tag = f" ({', '.join(markers)})" if markers else ""
+        marker = " (default)" if i == default_idx else ""
         sr = int(dev["default_samplerate"])
-        print(f"  [{i}] {dev['name']}  {sr} Hz{tag}")
+        print(f"  [{i}] {dev['name']}  {sr} Hz{marker}")
 
-    prompt_str = (f"Select device (Enter for saved [{saved_idx}]): "
-                  if saved_valid else "Select device (Enter for default): ")
     try:
-        choice = input(prompt_str).strip()
-        idx = (saved_idx if saved_valid else None) if choice == "" else int(choice)
+        choice = input("Select device (Enter for default): ").strip()
+        idx = None if choice == "" else int(choice)
     except (ValueError, EOFError):
-        idx = saved_idx if saved_valid else None
+        idx = None
 
     if idx is not None:
         try:
@@ -625,8 +631,6 @@ def select_device():
             name = ""
         save_device(idx, name)
         print(f"  Saved device [{idx}] to {CONFIG_FILE}")
-    elif saved_valid:
-        idx = saved_idx
 
     return idx
 
