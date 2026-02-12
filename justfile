@@ -40,22 +40,6 @@ start:
 start-custom key=default_key modifier=default_modifier:
     uv run python src/voice_type --key {{ key }} --modifier {{ modifier }} --model {{ model }}
 
-# Start toggle-mode daemon
-start-toggle:
-    uv run python src/voice_type_toggle.py --model {{ model }}
-
-# Send toggle command to running daemon
-toggle:
-    uv run python src/voice_type_toggle.py --toggle
-
-# Query toggle daemon status
-status:
-    uv run python src/voice_type_toggle.py --status
-
-# Stop toggle daemon
-stop:
-    uv run python src/voice_type_toggle.py --stop
-
 # ─── Audio Devices ────────────────────────────────────────────────────────────
 
 # List available audio input devices
@@ -65,3 +49,7 @@ devices:
 # Start with a specific audio device index
 start-device device_id:
     uv run python src/voice_type --device {{ device_id }} --model {{ model }}
+
+
+run:
+    uv run python src/voice_type
