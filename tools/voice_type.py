@@ -94,22 +94,11 @@ def notify(title, body="", timeout=3000):
 # Text injection (platform-adaptive)
 # ---------------------------------------------------------------------------
 
-def type_text_linux(text, erase_leaked=True):
+def type_text_linux(text):
     """Linux: ydotool for real keystrokes, clipboard fallback."""
     if not text.strip():
         return False
     try:
-        # Delete the trigger key character that leaked to the focused app
-        # during the push-to-talk combo (e.g. the 'x' from Super+X).
-        # Safe to do here because all modifier keys are released by now.
-        if erase_leaked:
-            keys = ["Backspace"]
-            if erase_leaked != "no_space":
-                keys.append("Space")
-            subprocess.run(
-                ["ydotool", "key", "--delay", "0"] + keys,
-                timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
         r = subprocess.run(
             ["ydotool", "type", "--key-delay", "2", "--", text],
             timeout=10, capture_output=True,
@@ -153,9 +142,9 @@ def type_text_pynput(text):
     return True
 
 
-def type_text(text, erase_leaked=True):
+def type_text(text):
     if IS_LINUX:
-        return type_text_linux(text, erase_leaked=erase_leaked)
+        return type_text_linux(text)
     return type_text_pynput(text)
 
 
@@ -272,7 +261,14 @@ _EVDEV_MODIFIER_VARIANTS = {
 }
 
 class EvdevKeyMonitor:
-    """Push-to-talk via evdev (Linux)."""
+    """Push-to-talk via evdev (Linux).
+
+    Grabs keyboards at startup and proxies all events through a UInput
+    virtual device.  The trigger key is consumed (not forwarded) while
+    the modifier is held, so it never reaches the display server.
+    All other keys pass through transparently — no stale state issues.
+    Kernel auto-releases grabs + closes UInput if the process dies.
+    """
 
     def __init__(self, on_press, on_release, key_char="x", modifier="cmd"):
         import evdev
@@ -294,6 +290,9 @@ class EvdevKeyMonitor:
         self.mod_held = False
         self.key_active = False
         self.running = False
+        self._uinput = None
+        self._grabbed_fds = set()
+        self._pending_mod_event = None
 
     def find_keyboards(self):
         import evdev
@@ -306,6 +305,7 @@ class EvdevKeyMonitor:
         return keyboards
 
     def start(self):
+        import evdev
         self.running = True
         keyboards = self.find_keyboards()
         if not keyboards:
@@ -313,8 +313,21 @@ class EvdevKeyMonitor:
             print("  Make sure your user is in the 'input' group:")
             print("    sudo usermod -aG input $USER")
             return
+
+        grab_devices = [kb for kb in keyboards
+                        if "keyboard" in kb.name.lower()]
         names = [kb.name for kb in keyboards]
-        print(f"Push-to-talk: monitoring {len(keyboards)} keyboard(s): {names}")
+        print(f"Push-to-talk: monitoring {len(keyboards)} device(s): {names}")
+
+        if grab_devices:
+            grab_names = [kb.name for kb in grab_devices]
+            print(f"  Proxied keyboards: {grab_names}")
+            self._uinput = evdev.UInput.from_device(
+                *grab_devices, name="voice-type-proxy")
+            for dev in grab_devices:
+                dev.grab()
+            self._grabbed_fds = {dev.fd for dev in grab_devices}
+
         thread = threading.Thread(target=self._monitor_loop, args=(keyboards,),
                                   daemon=True)
         thread.start()
@@ -327,30 +340,66 @@ class EvdevKeyMonitor:
             r, _, _ = select.select(fds.keys(), [], [], 1.0)
             for fd in r:
                 dev = fds[fd]
+                is_proxied = fd in self._grabbed_fds
                 try:
                     for event in dev.read():
-                        if event.type != evdev.ecodes.EV_KEY:
-                            continue
-                        self._handle_key(event.code, event.value)
+                        action = None
+                        if event.type == evdev.ecodes.EV_KEY:
+                            action = self._handle_key(event.code, event.value)
+
+                        if is_proxied and self._uinput:
+                            if action == "consume":
+                                # Combo fired — discard buffered modifier
+                                self._pending_mod_event = None
+                            elif action == "buffer":
+                                # Hold modifier, don't forward yet
+                                self._pending_mod_event = event
+                            else:
+                                # Forward — flush pending modifier first
+                                # if a real key arrives (not SYN etc.)
+                                if (self._pending_mod_event is not None
+                                        and event.type == evdev.ecodes.EV_KEY):
+                                    self._uinput.write_event(
+                                        self._pending_mod_event)
+                                    self._pending_mod_event = None
+                                self._uinput.write_event(event)
                 except OSError:
                     pass
 
     def _handle_key(self, code, value):
+        """Returns 'buffer', 'consume', or None (forward)."""
         if code in self.mod_codes:
-            self.mod_held = value != 0
-            if value == 0 and self.key_active:
-                self.key_active = False
-                self.on_release()
+            if value == 1:
+                self.mod_held = True
+                return "buffer"
+            elif value == 0:
+                self.mod_held = False
+                if self.key_active:
+                    self.key_active = False
+                    self.on_release()
+                    return "consume"  # mod UP during combo — consume
+                return None  # normal mod UP — forward
+            return None  # repeat
         elif code == self.key_code:
             if value == 1 and self.mod_held and not self.key_active:
                 self.key_active = True
                 self.on_press()
-            elif value == 0 and self.key_active:
-                self.key_active = False
-                self.on_release()
+                return "consume"
+            elif self.key_active:
+                if value == 0:
+                    self.key_active = False
+                    self.on_release()
+                return "consume"  # repeat or release during combo
+        return None  # forward everything else
 
     def stop(self):
         self.running = False
+        if self._uinput:
+            try:
+                self._uinput.close()
+            except Exception:
+                pass
+            self._uinput = None
 
 
 # ---------------------------------------------------------------------------
@@ -458,7 +507,6 @@ class VoiceTypeDaemon:
         self.modifier = modifier
         self.key_monitor = None
         self._stop_event = threading.Event()
-        self._last_text = ""
 
     def start(self):
         self.asr.load()
@@ -536,12 +584,7 @@ class VoiceTypeDaemon:
             elapsed = (time.perf_counter() - t0) * 1000
 
             if text.strip():
-                # Skip space after Backspace if previous text ended with
-                # sentence-ending punctuation (field likely has ". " already).
-                ends_punct = self._last_text.rstrip().endswith((".", "!", "?"))
-                erase = "no_space" if ends_punct else True
-                ok = type_text(text, erase_leaked=erase)
-                self._last_text = text
+                ok = type_text(text)
                 status = "typed" if ok else "failed"
                 notify("Voice Type",
                        f"{text[:100]}  [{elapsed:.0f}ms]", timeout=4000)
