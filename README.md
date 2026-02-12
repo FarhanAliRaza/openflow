@@ -7,6 +7,7 @@ Voice typing and transcription powered by [Qwen3-ASR](https://huggingface.co/Qwe
 - **Push-to-talk voice typing** — hold Win/Cmd+X (configurable), speak, release to transcribe and auto-type
 - **Fast inference** — runs Qwen3-ASR-0.6B in bfloat16 on CUDA (CPU fallback available)
 - **Cross-platform** — auto-detects Linux (evdev + ydotool), macOS (pynput), Windows (pynput)
+- **No key leaking** — trigger key never reaches the focused app (evdev proxy on Linux, suppress mode on macOS/Windows)
 
 ## Quick Start
 
@@ -42,13 +43,13 @@ This downloads ~1.8 GB into `Qwen3-ASR-0.6B/` inside the project directory.
 **Custom location:** If you store the weights elsewhere, pass the path directly:
 
 ```bash
-uv run python tools/voice_type.py --model /path/to/Qwen3-ASR-0.6B
+uv run python src/voice_type --model /path/to/Qwen3-ASR-0.6B
 ```
 
 ### 4. Start voice typing
 
 ```bash
-uv run python tools/voice_type.py
+uv run python src/voice_type
 ```
 
 Hold **Win/Cmd+X** to record, release to transcribe. Text is pasted into whatever window is focused.
@@ -63,23 +64,23 @@ sudo usermod -aG input $USER  # log out & back in
 
 ## Usage
 
-The single `tools/voice_type.py` script auto-detects your platform and uses the appropriate backend (evdev on Linux, pynput on macOS/Windows).
+The `src/voice_type/` package auto-detects your platform and uses the appropriate backend (evdev on Linux, pynput on macOS/Windows).
 
 ```bash
 # Default shortcut: Win/Cmd+X
-uv run python tools/voice_type.py
+uv run python src/voice_type
 
 # Custom shortcut (e.g. Ctrl+V)
-uv run python tools/voice_type.py --key v --modifier ctrl
+uv run python src/voice_type --key v --modifier ctrl
 
 # List audio input devices
-uv run python tools/voice_type.py --list-devices
+uv run python src/voice_type --list-devices
 
 # Select a specific device
-uv run python tools/voice_type.py --device 8
+uv run python src/voice_type --device 8
 
 # Use weights from a custom path
-uv run python tools/voice_type.py --model /path/to/Qwen3-ASR-0.6B
+uv run python src/voice_type --model /path/to/Qwen3-ASR-0.6B
 ```
 
 **Platform notes:**
@@ -91,10 +92,20 @@ uv run python tools/voice_type.py --model /path/to/Qwen3-ASR-0.6B
 
 ```
 openflow/
-├── tools/
-│   └── voice_type.py           # Cross-platform push-to-talk voice typing
-├── Qwen3-ASR-0.6B/             # Model weights (not in git)
-├── justfile                     # Command runner recipes
+├── src/
+│   └── voice_type/
+│       ├── __main__.py        # Entry point
+│       ├── cli.py             # Argparse + main()
+│       ├── config.py          # Constants, paths, device config
+│       ├── notify.py          # Desktop notifications
+│       ├── text_inject.py     # ydotool / clipboard text injection
+│       ├── audio.py           # Recording + resampling
+│       ├── asr.py             # ASR model wrapper
+│       ├── key_monitor.py     # Evdev proxy + pynput suppress monitors
+│       ├── daemon.py          # VoiceTypeDaemon
+│       └── devices.py         # Audio device selection
+├── Qwen3-ASR-0.6B/            # Model weights (not in git)
+├── justfile                    # Command runner recipes
 └── pyproject.toml
 ```
 
