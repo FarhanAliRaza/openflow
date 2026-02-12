@@ -94,11 +94,19 @@ def notify(title, body="", timeout=3000):
 # Text injection (platform-adaptive)
 # ---------------------------------------------------------------------------
 
-def type_text_linux(text):
+def type_text_linux(text, erase_leaked=True):
     """Linux: ydotool for real keystrokes, clipboard fallback."""
     if not text.strip():
         return False
     try:
+        # Delete the trigger key character that leaked to the focused app
+        # during the push-to-talk combo (e.g. the 'x' from Super+X).
+        # Safe to do here because all modifier keys are released by now.
+        if erase_leaked:
+            subprocess.run(
+                ["ydotool", "key", "--delay", "0", "Backspace"],
+                timeout=2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
         r = subprocess.run(
             ["ydotool", "type", "--key-delay", "2", "--", text],
             timeout=10, capture_output=True,
@@ -259,7 +267,6 @@ _EVDEV_MODIFIER_VARIANTS = {
     "KEY_LEFTALT":   ("KEY_LEFTALT", "KEY_RIGHTALT"),
     "KEY_LEFTSHIFT": ("KEY_LEFTSHIFT", "KEY_RIGHTSHIFT"),
 }
-
 
 class EvdevKeyMonitor:
     """Push-to-talk via evdev (Linux)."""
