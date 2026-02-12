@@ -413,7 +413,13 @@ _PYNPUT_MODIFIER_ALIASES = {
 
 
 class PynputKeyMonitor:
-    """Push-to-talk via pynput (macOS/Windows)."""
+    """Push-to-talk via pynput (macOS/Windows).
+
+    Uses suppress=True so all keyboard events are consumed by pynput.
+    Non-combo events are re-emitted via Controller.  The modifier press
+    is buffered until we know whether the trigger key follows, preventing
+    the OS from seeing a lone modifier tap during the combo.
+    """
 
     def __init__(self, on_press, on_release, key_char="x", modifier="cmd"):
         from pynput import keyboard
@@ -427,6 +433,8 @@ class PynputKeyMonitor:
         self.mod_held = False
         self.key_active = False
         self.listener = None
+        self._controller = keyboard.Controller()
+        self._pending_mod_key = None
 
     def _is_modifier(self, key):
         from pynput.keyboard import Key
@@ -449,11 +457,18 @@ class PynputKeyMonitor:
             return key.vk == self.target_vk
         return False
 
+    def _flush_pending(self):
+        """Forward buffered modifier press to the OS."""
+        if self._pending_mod_key is not None:
+            self._controller.press(self._pending_mod_key)
+            self._pending_mod_key = None
+
     def start(self):
         from pynput import keyboard
         self.listener = keyboard.Listener(
             on_press=self._on_press,
             on_release=self._on_release,
+            suppress=True,
         )
         self.listener.daemon = True
         self.listener.start()
@@ -465,19 +480,35 @@ class PynputKeyMonitor:
     def _on_press(self, key):
         if self._is_modifier(key):
             self.mod_held = True
+            self._pending_mod_key = key
         elif self._is_target(key) and self.mod_held and not self.key_active:
+            # Combo — consume both (discard buffered modifier)
+            self._pending_mod_key = None
             self.key_active = True
             self.on_press_cb()
+        else:
+            # Not our combo — flush modifier and forward this key
+            self._flush_pending()
+            self._controller.press(key)
 
     def _on_release(self, key):
         if self._is_modifier(key):
             self.mod_held = False
             if self.key_active:
+                # Combo ends — consume modifier release
                 self.key_active = False
+                self._pending_mod_key = None
                 self.on_release_cb()
+            else:
+                # Normal modifier release — flush press + forward release
+                self._flush_pending()
+                self._controller.release(key)
         elif self._is_target(key) and self.key_active:
+            # Combo ends via trigger key release — consume
             self.key_active = False
             self.on_release_cb()
+        else:
+            self._controller.release(key)
 
     def stop(self):
         if self.listener:
