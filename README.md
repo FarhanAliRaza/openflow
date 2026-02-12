@@ -4,10 +4,9 @@ Voice typing and transcription powered by [Qwen3-ASR](https://huggingface.co/Qwe
 
 ## Features
 
-- **Push-to-talk voice typing** — hold Win+X (configurable), speak, release to transcribe and auto-type
+- **Push-to-talk voice typing** — hold Win/Cmd+X (configurable), speak, release to transcribe and auto-type
 - **Fast inference** — runs Qwen3-ASR-0.6B in bfloat16 on CUDA (CPU fallback available)
-- **Works everywhere** — types directly into any focused window via ydotool (no focus stealing)
-- **Toggle mode** — alternative press-to-start/press-to-stop via GNOME shortcut
+- **Cross-platform** — auto-detects Linux (evdev + ydotool), macOS (pynput), Windows (pynput)
 
 ## Quick Start
 
@@ -29,20 +28,10 @@ uv sync
 Or with pip:
 
 ```bash
-pip install numpy soundfile sounddevice scipy pyperclip qwen-asr transformers tokenizers evdev torch
+pip install numpy soundfile sounddevice scipy pyperclip qwen-asr transformers tokenizers pynput evdev torch
 ```
 
-### 3. Install system dependencies (Linux)
-
-```bash
-sudo apt install ydotool
-sudo systemctl enable --now ydotool
-sudo usermod -aG input $USER
-```
-
-Log out and back in for the group change to take effect.
-
-### 4. Download model weights
+### 3. Download model weights
 
 ```bash
 huggingface-cli download Qwen/Qwen3-ASR-0.6B --local-dir Qwen3-ASR-0.6B
@@ -56,28 +45,32 @@ This downloads ~1.8 GB into `Qwen3-ASR-0.6B/` inside the project directory.
 uv run python tools/voice_type.py --model /path/to/Qwen3-ASR-0.6B
 ```
 
-### 5. Start voice typing
+### 4. Start voice typing
 
 ```bash
 uv run python tools/voice_type.py
 ```
 
-Hold **Win+X** to record, release to transcribe. Text is typed into whatever window is focused.
+Hold **Win/Cmd+X** to record, release to transcribe. Text is pasted into whatever window is focused.
 
-See the [Linux setup guide](docs/LINUX.md) for more details on system dependencies.
+**Linux setup (one-time):**
+
+```bash
+sudo apt install ydotool
+sudo systemctl enable --now ydotool
+sudo usermod -aG input $USER  # log out & back in
+```
 
 ## Usage
 
-### Voice Typing (Push-to-Talk)
-
-The default mode. Hold a key combo to record, release to transcribe and auto-type.
+The single `tools/voice_type.py` script auto-detects your platform and uses the appropriate backend (evdev on Linux, pynput on macOS/Windows).
 
 ```bash
-# Default shortcut: Win+X
+# Default shortcut: Win/Cmd+X
 uv run python tools/voice_type.py
 
 # Custom shortcut (e.g. Ctrl+V)
-uv run python tools/voice_type.py --key KEY_V --modifier KEY_LEFTCTRL
+uv run python tools/voice_type.py --key v --modifier ctrl
 
 # List audio input devices
 uv run python tools/voice_type.py --list-devices
@@ -89,45 +82,36 @@ uv run python tools/voice_type.py --device 8
 uv run python tools/voice_type.py --model /path/to/Qwen3-ASR-0.6B
 ```
 
-### Voice Typing (Toggle Mode)
-
-Alternative mode using a GNOME keyboard shortcut to toggle recording on/off via a socket daemon.
-
-```bash
-# Start the daemon
-uv run python tools/voice_type_toggle.py
-
-# Toggle recording (bind this to a keyboard shortcut)
-uv run python tools/voice_type_toggle.py --toggle
-
-# Check status / stop
-uv run python tools/voice_type_toggle.py --status
-uv run python tools/voice_type_toggle.py --stop
-```
-
-## Platform Guides
-
-- [Linux Setup Guide](docs/LINUX.md) — push-to-talk, ydotool, system dependencies
-- [Windows Setup Guide](docs/WINDOWS.md) — transcription scripts, Gradio UI
+**Platform notes:**
+- **macOS**: Grant Accessibility permissions to your terminal (System Settings > Privacy & Security > Accessibility)
+- **Windows**: No special setup needed
+- **Linux (X11/Wayland)**: Requires ydotool for text injection (see Linux setup above)
 
 ## Project Structure
 
 ```
 openflow/
 ├── tools/
-│   ├── voice_type.py             # Push-to-talk voice typing daemon
-│   └── voice_type_toggle.py      # Toggle-mode voice typing daemon
-├── docs/
-│   ├── LINUX.md                  # Linux setup guide
-│   └── WINDOWS.md                # Windows setup guide
-├── Qwen3-ASR-0.6B/              # Model weights (not in git)
-├── justfile                      # Command runner recipes
+│   └── voice_type.py           # Cross-platform push-to-talk voice typing
+├── Qwen3-ASR-0.6B/             # Model weights (not in git)
+├── justfile                     # Command runner recipes
 └── pyproject.toml
+```
+
+## Using the justfile
+
+If you have [just](https://github.com/casey/just) installed:
+
+```bash
+just install          # uv sync
+just download-model   # Download Qwen3-ASR-0.6B weights
+just setup-linux      # Install ydotool + input group
+just start            # Start voice typing
+just devices          # List audio input devices
 ```
 
 ## Requirements
 
 - Python 3.10–3.12
 - NVIDIA GPU with CUDA (recommended) or CPU
-- Linux for voice typing (push-to-talk uses evdev + ydotool)
-- Windows/macOS support is limited (see [Windows guide](docs/WINDOWS.md))
+- Works on Linux, macOS, and Windows
