@@ -19,7 +19,8 @@ dependencies = [
 gradio = ["gradio>=4.0"]
 dev = ["pytest>=7.0.0"]
 
+[dependency-groups]
+dev = ["pytest>=7.0.0"]
+
 [tool.uv]
-python = "3.12"
-dev-dependencies = ["pytest>=7.0.0"]
 override-dependencies = ["numba>=0.60", "llvmlite>=0.43", "librosa>=0.10"]
