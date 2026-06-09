@@ -13,6 +13,7 @@ dependencies = [
     "transformers>=4.52",
     "tokenizers>=0.22",
     "pynput>=1.7.0",
+    "psutil>=5.9.0",
     "evdev>=1.7.0; sys_platform == 'linux'",
 ]
 

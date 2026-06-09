@@ -51,6 +51,17 @@ def main():
                              "(default: cmd = Win/Cmd)")
     parser.add_argument("--model", type=str, default=MODEL_PATH,
                         help=f"Path to Qwen3-ASR model (default: {MODEL_PATH})")
+    parser.add_argument("--refine", action="store_true",
+                        help="Polish transcription with the local claude CLI "
+                             "(off by default; adds ~5-7s/utterance, needs "
+                             "claude installed). ASR vocab biasing stays on "
+                             "regardless.")
+    parser.add_argument("--refine-model", type=str, default="haiku",
+                        help="Model for the claude refinement layer "
+                             "(default: haiku)")
+    parser.add_argument("--debug", action="store_true",
+                        help="Print refinement details: detected CLAUDE.md, "
+                             "the prompt sent to claude, and before/after text")
     args = parser.parse_args()
 
     if args.list_devices:
@@ -71,5 +82,8 @@ def main():
         key=args.key,
         modifier=args.modifier,
         model_path=args.model,
+        refine=args.refine,
+        refine_model=args.refine_model,
+        debug=args.debug,
     )
     daemon.start()
